@@ -9,6 +9,9 @@ pub mod constraint_filter;
 pub mod lattice_oscillator;
 pub mod synth;
 
+#[cfg(feature = "python")]
+pub mod python;
+
 // Re-export main types for convenience
 pub use constraint_filter::{BiquadFilter, ConsonanceFilter, FilterType};
 pub use lattice_oscillator::{LatticeOscillator, LatticeShape};

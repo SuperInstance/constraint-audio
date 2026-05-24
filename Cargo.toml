@@ -16,3 +16,13 @@ fundsp = "0.20"
 cpal = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+numpy = { version = "0.22", optional = true }
+
+[features]
+default = []
+python = ["pyo3", "numpy"]
+
+[lib]
+name = "constraint_audio"
+crate-type = ["cdylib", "rlib"]
