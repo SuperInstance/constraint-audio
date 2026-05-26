@@ -50,7 +50,8 @@ impl AdsrEnvelope {
                 self.sustain
             } else {
                 // Release phase
-                let t = (i - (num_samples - release_samples)) as f64 / release_samples.max(1) as f64;
+                let t =
+                    (i - (num_samples - release_samples)) as f64 / release_samples.max(1) as f64;
                 self.sustain * (1.0 - t)
             };
             env.push(val.clamp(0.0, 1.0));

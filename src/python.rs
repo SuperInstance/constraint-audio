@@ -1,7 +1,7 @@
 //! PyO3 Python bindings for constraint-audio.
 
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 
 use crate::lattice_oscillator::{LatticeOscillator, LatticeShape};
 use crate::synth::{builtin_presets, ConstraintSynth};
@@ -46,7 +46,11 @@ impl PyLatticeOscillator {
     }
 
     /// Generate audio for `duration_secs` and return a numpy float64 array.
-    fn generate<'py>(&mut self, py: Python<'py>, duration_secs: f64) -> PyResult<Bound<'py, PyAny>> {
+    fn generate<'py>(
+        &mut self,
+        py: Python<'py>,
+        duration_secs: f64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let data = self.inner.generate(duration_secs);
         vec_to_numpy(py, data)
     }
@@ -92,8 +96,7 @@ impl PyConstraintSynth {
             .into_iter()
             .find(|p| p.name.to_lowercase() == name_lower)
             .ok_or_else(|| {
-                let names: Vec<String> =
-                    builtin_presets().iter().map(|p| p.name.clone()).collect();
+                let names: Vec<String> = builtin_presets().iter().map(|p| p.name.clone()).collect();
                 PyValueError::new_err(format!(
                     "Unknown preset '{preset_name}'. Available: {}",
                     names.join(", ")

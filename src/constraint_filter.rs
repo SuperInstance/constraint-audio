@@ -221,7 +221,10 @@ mod tests {
         for _ in 0..1000 {
             last = f.process(dc);
         }
-        assert!((last - 1.0).abs() < 0.01, "LP DC gain should be ~1.0, got {last}");
+        assert!(
+            (last - 1.0).abs() < 0.01,
+            "LP DC gain should be ~1.0, got {last}"
+        );
     }
 
     #[test]
