@@ -247,4 +247,125 @@ mod tests {
             assert!(s.is_finite(), "Output should be finite");
         }
     }
+
+    // ── Additional tests ───────────────────────────────────────
+
+    #[test]
+    fn test_bandpass_center_frequency() {
+        // Bandpass at 1000 Hz should pass 1000 Hz and attenuate DC
+        let mut bp = BiquadFilter::new(FilterType::Bandpass, 1000.0, 1.0, 44100.0);
+        // Feed 1000 Hz sine and check output is nonzero
+        let mut signal: Vec<f64> = (0..441)
+            .map(|i| (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / 44100.0).sin())
+            .collect();
+        bp.process_buffer(&mut signal);
+        let energy: f64 = signal.iter().map(|s| s * s).sum();
+        assert!(energy > 0.01, "Bandpass should pass center frequency");
+    }
+
+    #[test]
+    fn test_process_buffer_matches_sample_by_sample() {
+        let mut f1 = BiquadFilter::new(FilterType::Lowpass, 1000.0, 0.707, 44100.0);
+        let mut f2 = BiquadFilter::new(FilterType::Lowpass, 1000.0, 0.707, 44100.0);
+        let input: Vec<f64> = (0..256).map(|i| (i as f64 * 0.3).sin()).collect();
+        // Process sample by sample
+        let mut expected: Vec<f64> = Vec::new();
+        for &s in &input {
+            expected.push(f1.process(s));
+        }
+        // Process as buffer
+        let mut actual = input.clone();
+        f2.process_buffer(&mut actual);
+        for (i, (e, a)) in expected.iter().zip(actual.iter()).enumerate() {
+            assert!((e - a).abs() < 1e-12, "Mismatch at sample {i}: {e} vs {a}");
+        }
+    }
+
+    #[test]
+    fn test_filter_reset_clears_state() {
+        let mut f = BiquadFilter::new(FilterType::Lowpass, 1000.0, 0.707, 44100.0);
+        // Process some signal
+        for _ in 0..100 {
+            f.process(0.5);
+        }
+        f.reset();
+        // After reset, processing the same input as a fresh filter should match
+        let mut f_fresh = BiquadFilter::new(FilterType::Lowpass, 1000.0, 0.707, 44100.0);
+        for i in 0..50 {
+            let inp = (i as f64 * 0.1).sin();
+            let a = f.process(inp);
+            let b = f_fresh.process(inp);
+            assert!((a - b).abs() < 1e-12, "After reset, filter should behave like fresh: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn test_consonance_filter_bypass_blend_zero() {
+        let mut cf = ConsonanceFilter::new(261.63, 44100.0, 0.5, 0.0);
+        let input: Vec<f64> = (0..1024).map(|i| (i as f64 * 0.1).sin()).collect();
+        let mut buf = input.clone();
+        cf.process_buffer(&mut buf);
+        // With blend=0, output should equal input
+        for (i, (orig, out)) in input.iter().zip(buf.iter()).enumerate() {
+            assert!((orig - out).abs() < 1e-12, "Blend=0 should bypass at sample {i}");
+        }
+    }
+
+    #[test]
+    fn test_consonance_filter_full_blend() {
+        let mut cf = ConsonanceFilter::new(261.63, 44100.0, 0.5, 1.0);
+        let mut buf: Vec<f64> = (0..1024).map(|i| (i as f64 * 0.1).sin()).collect();
+        cf.process_buffer(&mut buf);
+        for &s in &buf {
+            assert!(s.is_finite(), "Full blend output should be finite");
+        }
+    }
+
+    #[test]
+    fn test_consonance_filter_reset() {
+        let mut cf = ConsonanceFilter::new(261.63, 44100.0, 0.5, 0.5);
+        let mut buf: Vec<f64> = vec![1.0; 512];
+        cf.process_buffer(&mut buf);
+        cf.reset();
+        // Should not panic after reset
+        let mut buf2: Vec<f64> = vec![1.0; 512];
+        cf.process_buffer(&mut buf2);
+        for &s in &buf2 {
+            assert!(s.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_filter_serialization_deserialization() {
+        let f = BiquadFilter::new(FilterType::Lowpass, 1000.0, 0.707, 44100.0);
+        let json = serde_json::to_string(&f).expect("serialize");
+        let f2: BiquadFilter = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(f2.filter_type, FilterType::Lowpass);
+        assert!((f2.cutoff - 1000.0).abs() < 1e-10);
+        assert!((f2.q - 0.707).abs() < 1e-10);
+        assert!((f2.sample_rate - 44100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_filter_type_serde_roundtrip() {
+        for ft in [FilterType::Lowpass, FilterType::Highpass, FilterType::Bandpass] {
+            let json = serde_json::to_string(&ft).unwrap();
+            let back: FilterType = serde_json::from_str(&json).unwrap();
+            assert_eq!(ft, back);
+        }
+    }
+
+    #[test]
+    fn test_lowpass_attenuates_high_freq() {
+        let mut lp = BiquadFilter::new(FilterType::Lowpass, 500.0, 0.707, 44100.0);
+        // High frequency signal (10 kHz)
+        let mut high: Vec<f64> = (0..4410)
+            .map(|i| (2.0 * std::f64::consts::PI * 10000.0 * i as f64 / 44100.0).sin())
+            .collect();
+        lp.process_buffer(&mut high);
+        let energy: f64 = high[1000..].iter().map(|s| s * s).sum::<f64>()
+            / (high.len() - 1000) as f64;
+        // Energy should be significantly attenuated
+        assert!(energy < 0.1, "LP should attenuate high frequency, energy={energy}");
+    }
 }

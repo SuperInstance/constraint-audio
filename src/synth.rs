@@ -295,4 +295,169 @@ mod tests {
         // Last sample should be 0
         assert!(buf.last().unwrap().abs() < 0.01);
     }
+
+    // ── Additional tests ───────────────────────────────────────
+
+    #[test]
+    fn test_adsr_zero_attack() {
+        let env = AdsrEnvelope {
+            attack: 0.0,
+            decay: 0.1,
+            sustain: 0.7,
+            release: 0.1,
+        };
+        let buf = env.generate(0.2, 1000.0);
+        // With zero attack, first sample should already be at peak or decay
+        assert!(buf[0] >= 0.99, "Zero attack should start at peak, got {}", buf[0]);
+    }
+
+    #[test]
+    fn test_adsr_zero_decay() {
+        let env = AdsrEnvelope {
+            attack: 0.01,
+            decay: 0.0,
+            sustain: 0.8,
+            release: 0.1,
+        };
+        let buf = env.generate(0.2, 1000.0);
+        // Should produce valid output without division issues
+        assert!(!buf.is_empty());
+        for &s in &buf {
+            assert!(s >= 0.0 && s <= 1.0, "ADSR value out of range: {s}");
+        }
+    }
+
+    #[test]
+    fn test_adsr_zero_release() {
+        let env = AdsrEnvelope {
+            attack: 0.01,
+            decay: 0.1,
+            sustain: 0.5,
+            release: 0.0,
+        };
+        let buf = env.generate(0.2, 1000.0);
+        // Without release, total length should just be the note duration
+        let expected: usize = (0.2_f64 * 1000.0).round() as usize;
+        assert_eq!(buf.len(), expected);
+    }
+
+    #[test]
+    fn test_adsr_default() {
+        let env = AdsrEnvelope::default();
+        assert!((env.attack - 0.01).abs() < 1e-10);
+        assert!((env.decay - 0.1).abs() < 1e-10);
+        assert!((env.sustain - 0.7).abs() < 1e-10);
+        assert!((env.release - 0.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_adsr_sustain_level() {
+        let env = AdsrEnvelope {
+            attack: 0.01,
+            decay: 0.01,
+            sustain: 0.3,
+            release: 0.01,
+        };
+        let buf = env.generate(0.5, 1000.0); // long sustain
+        // Middle of buffer should be at sustain level
+        let mid = buf[buf.len() / 2];
+        assert!((mid - 0.3).abs() < 0.01, "Sustain level should be ~0.3, got {mid}");
+    }
+
+    #[test]
+    fn test_play_note_with_consonance() {
+        let preset = builtin_presets()[0].clone();
+        let mut synth = ConstraintSynth::with_preset(44100.0, preset);
+        synth.consonance_blend = 0.8;
+        let buffer = synth.play_note(60, 100, 0.3);
+        assert!(!buffer.is_empty());
+        for &s in &buffer {
+            assert!(s.is_finite(), "Output with consonance must be finite");
+        }
+    }
+
+    #[test]
+    fn test_midi_to_freq_boundaries() {
+        // Lowest MIDI note
+        let f0 = ConstraintSynth::midi_to_freq(0);
+        assert!(f0 > 0.0 && f0 < 20.0, "MIDI 0 should be very low: {f0}");
+        // Highest MIDI note
+        let f127 = ConstraintSynth::midi_to_freq(127);
+        assert!(f127 > 10000.0, "MIDI 127 should be very high: {f127}");
+        // C4 = MIDI 60
+        let c4 = ConstraintSynth::midi_to_freq(60);
+        assert!((c4 - 261.63).abs() < 0.1, "C4 should be ~261.63 Hz: {c4}");
+    }
+
+    #[test]
+    fn test_play_note_velocity_affects_amplitude() {
+        let preset = builtin_presets()[0].clone();
+        let mut synth_lo = ConstraintSynth::with_preset(44100.0, preset.clone());
+        let mut synth_hi = ConstraintSynth::with_preset(44100.0, preset);
+        let lo = synth_lo.play_note(60, 40, 0.5);
+        let hi = synth_hi.play_note(60, 120, 0.5);
+        let lo_max = lo.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
+        let hi_max = hi.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
+        assert!(hi_max > lo_max, "Higher velocity should produce louder output: {hi_max} vs {lo_max}");
+    }
+
+    #[test]
+    fn test_play_note_all_shapes() {
+        for shape in [
+            LatticeShape::Sine,
+            LatticeShape::Square,
+            LatticeShape::Saw,
+            LatticeShape::Triangle,
+            LatticeShape::Eisenstein,
+        ] {
+            let preset = SynthPreset {
+                name: "test".into(),
+                shape,
+                envelope: AdsrEnvelope::default(),
+                filter_type: FilterType::Lowpass,
+                filter_cutoff: 2000.0,
+                filter_q: 1.0,
+                stretch: 1.0,
+                noise_floor: 0.0,
+            };
+            let mut synth = ConstraintSynth::with_preset(44100.0, preset);
+            let buf = synth.play_note(64, 100, 0.2);
+            assert!(buf.iter().all(|s| s.is_finite()), "Shape {:?} produced non-finite output", shape);
+        }
+    }
+
+    #[test]
+    fn test_synth_preset_serde() {
+        let presets = builtin_presets();
+        for preset in &presets {
+            let json = serde_json::to_string(preset).expect("serialize preset");
+            let back: SynthPreset = serde_json::from_str(&json).expect("deserialize preset");
+            assert_eq!(back.name, preset.name);
+            assert_eq!(back.shape, preset.shape);
+            assert!((back.filter_cutoff - preset.filter_cutoff).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_builtin_presets_count() {
+        let presets = builtin_presets();
+        assert_eq!(presets.len(), 5, "Should have 5 built-in presets");
+        // Verify all have unique names
+        let names: std::collections::HashSet<&str> = presets.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names.len(), 5, "All preset names should be unique");
+    }
+
+    #[test]
+    fn test_adsr_envelope_all_clamped() {
+        let env = AdsrEnvelope {
+            attack: 0.1,
+            decay: 0.1,
+            sustain: 0.5,
+            release: 0.1,
+        };
+        let buf = env.generate(0.3, 1000.0);
+        for &v in &buf {
+            assert!(v >= 0.0 && v <= 1.0, "Envelope value out of [0,1]: {v}");
+        }
+    }
 }

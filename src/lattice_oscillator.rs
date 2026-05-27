@@ -230,4 +230,115 @@ mod tests {
         let max_val = samples.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
         assert!(max_val > 0.01, "Oscillator should produce nonzero output");
     }
+
+    // ── Additional tests ───────────────────────────────────────
+
+    #[test]
+    fn test_triangle_output_range() {
+        let mut osc = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Triangle);
+        let samples = osc.generate(0.01);
+        assert!(!samples.is_empty());
+        for &s in &samples {
+            assert!(s >= -1.5 && s <= 1.5, "Triangle sample out of range: {s}");
+        }
+    }
+
+    #[test]
+    fn test_stretch_parameter() {
+        let mut osc_normal = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Sine);
+        let mut osc_stretched = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Sine);
+        osc_stretched.stretch = 2.0;
+        let normal = osc_normal.generate(0.01);
+        let stretched = osc_stretched.generate(0.01);
+        // Stretched oscillator should produce different output (different phase increment)
+        assert_ne!(normal, stretched, "Stretch should change oscillator output");
+        // Both should produce same number of samples
+        assert_eq!(normal.len(), stretched.len());
+    }
+
+    #[test]
+    fn test_noise_floor_adds_noise() {
+        let mut osc_clean = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Sine);
+        let mut osc_noisy = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Sine);
+        osc_noisy.noise_floor = 0.1;
+        let clean = osc_clean.generate(0.01);
+        let noisy = osc_noisy.generate(0.01);
+        // Noisy version should have higher energy (on average)
+        let clean_energy: f64 = clean.iter().map(|s| s * s).sum();
+        let noisy_energy: f64 = noisy.iter().map(|s| s * s).sum();
+        assert!(noisy_energy > clean_energy, "Noise floor should add energy");
+    }
+
+    #[test]
+    fn test_snap_threshold_affects_eisenstein() {
+        let mut osc_loose = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Eisenstein);
+        osc_loose.snap_threshold = 0.001; // Very tight snapping
+        let mut osc_tight = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Eisenstein);
+        osc_tight.snap_threshold = 0.5; // Loose snapping
+        let loose = osc_loose.generate(0.01);
+        let tight = osc_tight.generate(0.01);
+        // Different snap thresholds should produce different outputs
+        assert_ne!(loose, tight, "Different snap thresholds should yield different results");
+    }
+
+    #[test]
+    fn test_zero_snap_threshold() {
+        let mut osc = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Eisenstein);
+        osc.snap_threshold = 0.0; // No snapping
+        let samples = osc.generate(0.01);
+        assert!(!samples.is_empty());
+        for &s in &samples {
+            assert!(s.is_finite(), "Zero snap threshold should produce finite output");
+        }
+    }
+
+    #[test]
+    fn test_serde_roundtrip() {
+        let mut osc = LatticeOscillator::new(440.0, 44100.0, LatticeShape::Saw);
+        osc.stretch = 1.5;
+        osc.noise_floor = 0.02;
+        osc.snap_threshold = 0.3;
+        let json = serde_json::to_string(&osc).expect("serialize");
+        let osc2: LatticeOscillator = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(osc2.freq, 440.0);
+        assert_eq!(osc2.sample_rate, 44100.0);
+        assert_eq!(osc2.shape, LatticeShape::Saw);
+        assert!((osc2.stretch - 1.5).abs() < 1e-10);
+        assert!((osc2.noise_floor - 0.02).abs() < 1e-10);
+        assert!((osc2.snap_threshold - 0.3).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_lattice_shape_serde() {
+        for shape in [
+            LatticeShape::Sine,
+            LatticeShape::Square,
+            LatticeShape::Saw,
+            LatticeShape::Triangle,
+            LatticeShape::Eisenstein,
+        ] {
+            let json = serde_json::to_string(&shape).unwrap();
+            let back: LatticeShape = serde_json::from_str(&json).unwrap();
+            assert_eq!(shape, back);
+        }
+    }
+
+    #[test]
+    fn test_very_low_frequency() {
+        let mut osc = LatticeOscillator::new(1.0, 44100.0, LatticeShape::Sine);
+        let samples = osc.generate(1.0);
+        assert_eq!(samples.len(), 44100);
+        for &s in &samples {
+            assert!(s.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_high_frequency_aliasing_is_bounded() {
+        let mut osc = LatticeOscillator::new(18000.0, 44100.0, LatticeShape::Saw);
+        let samples = osc.generate(0.01);
+        for &s in &samples {
+            assert!(s.is_finite(), "High freq saw should stay finite");
+        }
+    }
 }
